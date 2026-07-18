@@ -20,7 +20,7 @@
       "required": true,
       "default": 0,
       "min": 0,
-      "max": 0
+      "max": 9999
     },
     "unit": {
       "type": "string",

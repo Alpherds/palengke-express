@@ -521,7 +521,7 @@ export interface ApiProductProduct extends Struct.CollectionTypeSchema {
       Schema.Attribute.Required &
       Schema.Attribute.SetMinMax<
         {
-          max: 0;
+          max: 9999;
           min: 0;
         },
         number
