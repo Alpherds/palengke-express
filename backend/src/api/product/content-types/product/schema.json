@@ -37,6 +37,12 @@
     "is_active": {
       "type": "boolean",
       "default": true
+    },
+    "orders": {
+      "type": "relation",
+      "relation": "oneToMany",
+      "target": "api::order.order",
+      "mappedBy": "product"
     }
   }
 }
