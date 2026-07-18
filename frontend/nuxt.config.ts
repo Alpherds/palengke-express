@@ -25,6 +25,13 @@ export default defineNuxtConfig({
     },
   },
 
+   runtimeConfig: {
+    public: {
+      strapiUrl: 'http://localhost:1337',
+    },
+  },
+
+
   eslint: {
     config: {
       import: {
