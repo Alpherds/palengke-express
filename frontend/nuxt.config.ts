@@ -20,7 +20,7 @@ export default defineNuxtConfig({
     },
     vuetifyOptions: {
       theme: {
-        defaultTheme: 'dark', // default 'system' requires `ssr: false` to avoid hydration warnings
+        defaultTheme: 'light', // default 'system' requires `ssr: false` to avoid hydration warnings
       },
     },
   },
