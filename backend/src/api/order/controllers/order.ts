@@ -1,10 +1,41 @@
 import { factories } from '@strapi/strapi'
 import { randomUUID } from 'node:crypto'
 
-/**
- * Generates an order code such as:
- * PLX-20260720-A1B2C3D4
- */
+/*
+|--------------------------------------------------------------------------
+| Constants
+|--------------------------------------------------------------------------
+*/
+
+const MAX_ORDER_QUANTITY = 100
+
+/*
+|--------------------------------------------------------------------------
+| Custom request error
+|--------------------------------------------------------------------------
+*/
+
+class OrderRequestError extends Error {
+  status: 400 | 404
+
+  constructor(status: 400 | 404, message: string) {
+    super(message)
+
+    this.name = 'OrderRequestError'
+    this.status = status
+  }
+}
+
+/*
+|--------------------------------------------------------------------------
+| Generate order code
+|--------------------------------------------------------------------------
+|
+| Example:
+| PLX-20260720-A1B2C3D4
+|
+*/
+
 function generateOrderCode(): string {
   const now = new Date()
 
@@ -20,15 +51,12 @@ function generateOrderCode(): string {
   return `PLX-${year}${month}${day}-${reference}`
 }
 
-/**
- * Converts:
- * +639171234567
- * 0917 123 4567
- * 0917-123-4567
- *
- * Into:
- * 09171234567
- */
+/*
+|--------------------------------------------------------------------------
+| Normalize Philippine contact number
+|--------------------------------------------------------------------------
+*/
+
 function normalizeContactNumber(value: unknown): string {
   let contactNumber = String(value ?? '')
     .trim()
@@ -41,13 +69,22 @@ function normalizeContactNumber(value: unknown): string {
   return contactNumber
 }
 
+/*
+|--------------------------------------------------------------------------
+| Order controller
+|--------------------------------------------------------------------------
+*/
+
 export default factories.createCoreController(
   'api::order.order',
 
   ({ strapi }) => ({
     async submit(ctx) {
       try {
-        const body = (ctx.request.body ?? {}) as Record<string, unknown>
+        const body = (ctx.request.body ?? {}) as Record<
+          string,
+          unknown
+        >
 
         const customerName = String(
           body.customer_name ?? '',
@@ -65,7 +102,7 @@ export default factories.createCoreController(
 
         /*
         |--------------------------------------------------------------------------
-        | Validate customer information
+        | Validate customer name
         |--------------------------------------------------------------------------
         */
 
@@ -77,6 +114,12 @@ export default factories.createCoreController(
             'Maglagay ng wastong pangalan.',
           )
         }
+
+        /*
+        |--------------------------------------------------------------------------
+        | Validate Philippine mobile number
+        |--------------------------------------------------------------------------
+        */
 
         if (!/^09\d{9}$/.test(contactNumber)) {
           return ctx.badRequest(
@@ -93,12 +136,18 @@ export default factories.createCoreController(
         if (
           !Number.isInteger(quantity)
           || quantity < 1
-          || quantity > 100
+          || quantity > MAX_ORDER_QUANTITY
         ) {
           return ctx.badRequest(
-            'Ang quantity ay dapat mula 1 hanggang 100.',
+            `Ang quantity ay dapat mula 1 hanggang ${MAX_ORDER_QUANTITY}.`,
           )
         }
+
+        /*
+        |--------------------------------------------------------------------------
+        | Validate product documentId
+        |--------------------------------------------------------------------------
+        */
 
         if (!productDocumentId) {
           return ctx.badRequest(
@@ -106,75 +155,158 @@ export default factories.createCoreController(
           )
         }
 
-        /*
-        |--------------------------------------------------------------------------
-        | Retrieve the published product
-        |--------------------------------------------------------------------------
-        */
-
-        const product = await strapi
-          .documents('api::product.product')
-          .findOne({
-            documentId: productDocumentId,
-            status: 'published',
-          })
-
-        if (!product || !product.is_active) {
-          return ctx.notFound(
-            'Hindi available ang napiling produkto.',
-          )
-        }
-
-        /*
-        |--------------------------------------------------------------------------
-        | Calculate the total on the server
-        |--------------------------------------------------------------------------
-        */
-
-        const productPrice = Number(product.price)
-
-        if (
-          !Number.isFinite(productPrice)
-          || productPrice < 0
-        ) {
-          return ctx.internalServerError(
-            'Invalid ang presyo ng produkto.',
-          )
-        }
-
-        const totalAmount = Number(
-          (productPrice * quantity).toFixed(2),
-        )
-
         const orderCode = generateOrderCode()
 
         /*
         |--------------------------------------------------------------------------
-        | Save the order
+        | Transaction
         |--------------------------------------------------------------------------
+        |
+        | Both operations must succeed:
+        |
+        | 1. Create the order
+        | 2. Deduct product stock
+        |
         */
 
-        const orderData = {
-          order_code: orderCode,
-          customer_name: customerName,
-          contact_number: contactNumber,
-          quantity,
-          total_amount: totalAmount,
-          order_status: 'pending',
+        const result = await strapi.db.transaction(
+          async () => {
+            /*
+            |--------------------------------------------------------------------------
+            | Get the current product
+            |--------------------------------------------------------------------------
+            */
 
-          // Order belongs to this product
-          product: product.documentId,
-        } as any
+            const product = await strapi
+              .documents('api::product.product')
+              .findOne({
+                documentId: productDocumentId,
+              })
 
-        const order = await strapi
-          .documents('api::order.order')
-          .create({
-            data: orderData,
-          })
+            if (!product) {
+              throw new OrderRequestError(
+                404,
+                'Hindi makita ang napiling produkto.',
+              )
+            }
+
+            if (!product.is_active) {
+              throw new OrderRequestError(
+                400,
+                'Kasalukuyang hindi available ang produktong ito.',
+              )
+            }
+
+            /*
+            |--------------------------------------------------------------------------
+            | Check the stored product price
+            |--------------------------------------------------------------------------
+            */
+
+            const productPrice = Number(product.price)
+
+            if (
+              !Number.isFinite(productPrice)
+              || productPrice < 0
+            ) {
+              throw new Error(
+                'Invalid ang presyo ng produkto.',
+              )
+            }
+
+            /*
+            |--------------------------------------------------------------------------
+            | Check current stock
+            |--------------------------------------------------------------------------
+            */
+
+            const currentStock = Math.max(
+              0,
+              Math.floor(Number(product.quantity) || 0),
+            )
+
+            if (currentStock < 1) {
+              throw new OrderRequestError(
+                400,
+                'Ubos na ang stock ng produktong ito.',
+              )
+            }
+
+            if (quantity > currentStock) {
+              throw new OrderRequestError(
+                400,
+                `Hindi sapat ang stock. ${currentStock} na lamang ang available.`,
+              )
+            }
+
+            /*
+            |--------------------------------------------------------------------------
+            | Calculate total and remaining stock
+            |--------------------------------------------------------------------------
+            */
+
+            const totalAmount = Number(
+              (productPrice * quantity).toFixed(2),
+            )
+
+            const remainingStock = currentStock - quantity
+
+            /*
+            |--------------------------------------------------------------------------
+            | Create the order
+            |--------------------------------------------------------------------------
+            */
+
+            const orderData = {
+              order_code: orderCode,
+              customer_name: customerName,
+              contact_number: contactNumber,
+              quantity,
+              total_amount: totalAmount,
+              order_status: 'pending',
+
+              // Many-to-one relation using documentId
+              product: product.documentId,
+            } as any
+
+            const order = await strapi
+              .documents('api::order.order')
+              .create({
+                // Order has Draft & Publish enabled
+                status: 'published',
+
+                data: orderData,
+              })
+
+            /*
+            |--------------------------------------------------------------------------
+            | Deduct product stock
+            |--------------------------------------------------------------------------
+            */
+
+            await strapi
+              .documents('api::product.product')
+              .update({
+                documentId: product.documentId,
+
+                data: {
+                  quantity: remainingStock,
+                } as any,
+              })
+
+            return {
+              order,
+              product,
+              productPrice,
+              totalAmount,
+              remainingStock,
+            }
+          },
+        )
 
         /*
         |--------------------------------------------------------------------------
-        | Return safe customer-facing information
+        | Customer-facing response
         |--------------------------------------------------------------------------
         */
 
@@ -182,24 +314,36 @@ export default factories.createCoreController(
 
         ctx.body = {
           data: {
-            documentId: order.documentId,
+            documentId: result.order.documentId,
             order_code: orderCode,
             customer_name: customerName,
             contact_number: contactNumber,
             quantity,
-            total_amount: totalAmount,
+            total_amount: result.totalAmount,
             order_status: 'pending',
+            remaining_stock: result.remainingStock,
 
             product: {
-              documentId: product.documentId,
-              product_name: product.product_name,
-              price: productPrice,
-              unit: product.unit,
+              documentId: result.product.documentId,
+              product_name: result.product.product_name,
+              price: result.productPrice,
+              unit: result.product.unit,
             },
           },
         }
       } catch (error) {
-        strapi.log.error('Order submission failed:', error)
+        if (error instanceof OrderRequestError) {
+          if (error.status === 404) {
+            return ctx.notFound(error.message)
+          }
+
+          return ctx.badRequest(error.message)
+        }
+
+        strapi.log.error(
+          'Order submission failed:',
+          error,
+        )
 
         return ctx.internalServerError(
           'Hindi naisumite ang order. Subukan muli.',
