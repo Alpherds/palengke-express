@@ -52,7 +52,6 @@ interface SubmittedOrder {
   contact_number: string
   quantity: number
   total_amount: number
-  order_status: string
   remaining_stock: number
 
   product: {

@@ -263,7 +263,6 @@ export default factories.createCoreController(
               contact_number: contactNumber,
               quantity,
               total_amount: totalAmount,
-              order_status: 'pending',
 
               // Many-to-one relation using documentId
               product: product.documentId,
@@ -320,7 +319,6 @@ export default factories.createCoreController(
             contact_number: contactNumber,
             quantity,
             total_amount: result.totalAmount,
-            order_status: 'pending',
             remaining_stock: result.remainingStock,
 
             product: {
