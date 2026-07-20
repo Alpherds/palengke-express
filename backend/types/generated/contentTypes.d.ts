@@ -463,11 +463,6 @@ export interface ApiOrderOrder extends Struct.CollectionTypeSchema {
     order_code: Schema.Attribute.String &
       Schema.Attribute.Required &
       Schema.Attribute.Unique;
-    order_status: Schema.Attribute.Enumeration<
-      ['pending', 'confirmed', 'completed', 'cancelled']
-    > &
-      Schema.Attribute.Required &
-      Schema.Attribute.DefaultTo<'pending'>;
     product: Schema.Attribute.Relation<'manyToOne', 'api::product.product'>;
     publishedAt: Schema.Attribute.DateTime;
     quantity: Schema.Attribute.Integer &

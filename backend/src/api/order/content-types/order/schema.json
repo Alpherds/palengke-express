@@ -36,17 +36,6 @@
       "default": 0,
       "min": 0
     },
-    "order_status": {
-      "type": "enumeration",
-      "required": true,
-      "default": "pending",
-      "enum": [
-        "pending",
-        "confirmed",
-        "completed",
-        "cancelled"
-      ]
-    },
     "product": {
       "type": "relation",
       "relation": "manyToOne",
